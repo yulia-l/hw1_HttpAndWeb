@@ -6,10 +6,12 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -23,11 +25,10 @@ public class Server {
     }
 
     public void runServer(int port) {
-        final ExecutorService executorService = Executors.newFixedThreadPool(threadPoolSize);
-        try {
-            final var serverSocket = new ServerSocket(9999);
+        ExecutorService executorService = Executors.newFixedThreadPool(threadPoolSize);
+        try(ServerSocket serverSocket = new ServerSocket(port)) {
             while(true) {
-                final var clientSocket = serverSocket.accept();
+                Socket clientSocket = serverSocket.accept();
                 executorService.submit(() -> handleConnection(clientSocket));
             }
 
@@ -40,10 +41,8 @@ public class Server {
     public static void handleConnection(Socket socket) {
         try (
                 final var in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                final var out = new BufferedOutputStream(socket.getOutputStream());
-        ) {
-            //строка запроса только для чтения для простоты
-            //должно быть в форме GET /path HTTP/1.1
+                final var out = new BufferedOutputStream(socket.getOutputStream())) {
+
             final var requestLine = in.readLine();
             final var parts = requestLine.split(" ");
 
@@ -51,7 +50,13 @@ public class Server {
                 socket.close();
             }
 
-            final var path = parts[1];
+            Map<String, String> queryParams = Request.getQueryParams(parts[1]);
+
+            String path;
+            if(parts[1].contains("?")) {
+                path = parts[1].substring(0, parts[1].indexOf("?"));
+            } else path = parts[1];
+
             if (!VALID_PATHS.contains(path)) {
                 out.write((
                         "HTTP/1.1 404 Not Found\r\n" +
@@ -62,13 +67,11 @@ public class Server {
                 out.flush();
             }
 
-            final var filePath = Path.of(".", "public", path); //создается объект класса Path по указанному пути
-            final var mimeType = Files.probeContentType(filePath); //определяется тип содержимого файла
+            final var filePath = FileSystems.getDefault().getPath("public", path);
+            final var mimeType = Files.probeContentType(filePath);
 
-            //специальный чехол для classic
             if (path.equals("/classic.html")) {
                 final var template = Files.readString(filePath);
-                //меняет время на актуальное
                 final var content = template.replace(
                         "{time}",
                         LocalDateTime.now().toString()
@@ -98,4 +101,15 @@ public class Server {
         e.printStackTrace();
         }
     }
+
+    public void addHandler(String requestType, String path, Handler handler) {
+        if(requestType.equals("GET") && isValidPath(path)) {
+            handler.handleRequest();
+        }
+    }
+
+    private boolean isValidPath(String path) {
+        return VALID_PATHS.contains(path);
+    }
+
 }
